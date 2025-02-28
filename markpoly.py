@@ -469,25 +469,27 @@ class MarkdownTranslator:
             detected_lang) if detected_lang != 'unknown' else "the source language"
         target_lang_name = self._get_language_name(self.target_lang)
 
-        # Update system prompt to include source and target languages
+        # Updated system prompt to be more explicit about not including the markers
         system_prompt = f"""You are a markdown translator that only outputs the translated content.
 
     Rules:
-    1. Translate ONLY the text between <TRANSLATE> and </TRANSLATE> markers from {source_lang_name} to {target_lang_name}
+    1. Translate the content between the tags "<TRANSLATE>" and "</TRANSLATE>" from {source_lang_name} to {target_lang_name}
     2. Keep all markdown formatting exactly as is
-    3. Return ONLY the translated content, without any markers or explanations
+    3. Return ONLY the translated content without ANY additional text
     4. Keep line breaks exactly as they appear in the original
+    5. DO NOT include tags like "<TRANSLATE>" or "</TRANSLATE>" in your response
+    6. Respond ONLY with the translated text and nothing else
 
     For this {block["type"]}:
     {special_instructions.get(block["type"], "")}"""
 
-        user_prompt = f"""Translate this {block["type"]} from {source_lang_name} to {target_lang_name}, preserving all formatting:
+        user_prompt = f"""Translate this {block["type"]} from {source_lang_name} to {target_lang_name}, preserving all formatting.
 
     <TRANSLATE>
     {block['content']}
     </TRANSLATE>
 
-    Return only the translated text, keeping the exact same markdown formatting."""
+    IMPORTANT: Output only the translated text. Do not include any tags, or other markers in your response. Preserve the exact same markdown formatting of the original content."""
 
         try:
             # Log the request
@@ -511,11 +513,14 @@ class MarkdownTranslator:
 
             translated_text = response.choices[0].message.content.strip()
 
+            # Clean up any unwanted elements from the response
+            ##translated_text = self._clean_response(translated_text)
+
             # Log the response
             logger.debug("\n=== RESPONSE ===")
             logger.debug(f"Response content:")
             logger.debug(json.dumps(translated_text,
-                         ensure_ascii=False, indent=2))
+                        ensure_ascii=False, indent=2))
 
             # Verify the translation preserves markdown structure
             if block["type"] == "header" and not translated_text.startswith('#'):
@@ -532,6 +537,36 @@ class MarkdownTranslator:
         except Exception as e:
             logger.error(f"Error translating block: {str(e)}")
             return block  # Return original block if translation fails
+
+
+    def _clean_response(self, text: str) -> str:
+        """
+        Clean up any unwanted tags or markers from the translated text.
+        
+        Args:
+            text: The text to clean
+            
+        Returns:
+            Cleaned text with unwanted elements removed
+        """
+        # Remove triple backticks at the beginning and end
+        text = re.sub(r'^```[a-zA-Z]*\s*', '', text)
+        text = re.sub(r'\s *```\s*', '', text)
+
+        # Remove any instruction repetition that might be included
+        patterns_to_remove = [
+            r'INSTRUCTIONS:.*$',
+            r'IMPORTANT:.*$',
+            r'Output only the translated text\..*$',
+            r'Do not include.*$',
+            r'Translated content:.*$',
+            r'Translation:.*$'
+        ]
+
+        for pattern in patterns_to_remove:
+            text = re.sub(pattern, '', text, flags=re.MULTILINE)
+
+        return text.strip()
 
     def translate_markdown(
         self,
