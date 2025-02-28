@@ -21,6 +21,7 @@ In short, an LLM powered Markdown translator that understands both prose and cod
   - Different handling for tables, lists, headers, and paragraphs
   - Preserves markdown formatting for each type
   - Maintains special characters and structure
+  - Translate between two languages
 
 - Language Detection and Handling:
   - Uses specified source language if provided
@@ -58,12 +59,15 @@ options:
                         Path to save the translated markdown file. If not provided, will use input_file_translated.md (default: None)
   --source-lang SOURCE_LANG
                         Source language code or name (e.g., "es" or "spanish") (default: None)
+  --target-lang TARGET_LANG
+                        Target language code or name (e.g., "fr" or "french"), defaults to English (default: en)
   --api-key API_KEY     API key for the translation service (default: no-key)
   --base-url BASE_URL   Base URL for the API endpoint (default: http://localhost:11434/v1/)
   --model MODEL         Model name to use for translation (default: granite3.1-dense:latest)
   --log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
                         Set the logging level (default: INFO)
   --quiet               Suppress progress information (default: False)
+  --list-languages      List all supported languages and exit (default: False)
 ```
 ## Known Issues
 - It has been developed and tested with `granite-3.1`.

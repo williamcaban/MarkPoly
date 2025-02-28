@@ -25,7 +25,7 @@ SUPPORTED_LANGUAGES = {
     'italian': 'it',    # granite-3.1-8b-instruct
     'japanese': 'ja',   # granite-3.1-8b-instruct
     'korean': 'ko',     # granite-3.1-8b-instruct
-    'portuguese': 'pt', # granite-3.1-8b-instruct
+    'portuguese': 'pt',  # granite-3.1-8b-instruct
     'russian': 'ru',
     'spanish': 'es',    # granite-3.1-8b-instruct
     'swedish': 'sv',
@@ -39,7 +39,8 @@ class MarkdownTranslator:
         api_key: str = "no-key",
         base_url: str = "http://localhost:11434/v1/",
         model: str = "granite3.1-dense:latest",
-        source_lang: Optional[str] = None
+        source_lang: Optional[str] = None,
+        target_lang: Optional[str] = 'en'
     ):
         """
         Initialize the translator with API credentials and endpoint configuration.
@@ -49,6 +50,7 @@ class MarkdownTranslator:
             base_url: Base URL for the API endpoint
             model: Model name to use for translation
             source_lang: Optional source language code or name (e.g., 'es' or 'spanish')
+            target_lang: Target language code or name (e.g., 'fr' or 'french'), defaults to English
         """
         self.client = OpenAI(
             api_key=api_key,
@@ -57,11 +59,14 @@ class MarkdownTranslator:
         self.model = model
         self.source_lang = self._normalize_language_code(
             source_lang) if source_lang else None
+        self.target_lang = self._normalize_language_code(
+            target_lang) if target_lang else 'en'
         logger.info(f"Initialized translator with model: {model}")
         logger.info(f"Using API endpoint: {base_url}")
         if self.source_lang:
             logger.info(
                 f"Source language explicitly set to: {self.source_lang}")
+        logger.info(f"Target language set to: {self.target_lang}")
 
     def _normalize_language_code(self, lang: str) -> str:
         """
@@ -89,6 +94,21 @@ class MarkdownTranslator:
         # If we can't normalize it, log a warning and return as-is
         logger.warning(f"Unrecognized language specification: {lang}")
         return lang
+
+    def _get_language_name(self, lang_code: str) -> str:
+        """
+        Get the language name from a language code.
+        
+        Args:
+            lang_code: Language code (e.g., 'ja')
+            
+        Returns:
+            Language name (e.g., 'Japanese')
+        """
+        for name, code in SUPPORTED_LANGUAGES.items():
+            if code == lang_code:
+                return name.capitalize()
+        return lang_code.upper()
 
     def read_markdown_file(self, file_path: str) -> str:
         """Read the content of a markdown file."""
@@ -354,7 +374,6 @@ class MarkdownTranslator:
 
         return comments
 
-
     def translate_block(self, block: Dict[str, str]) -> Dict[str, str]:
         """
         Translate a single block using the configured API.
@@ -385,14 +404,17 @@ class MarkdownTranslator:
                     comment_text = comment['text']
                     detected_lang = self.detect_language(comment_text)
 
-                    if detected_lang not in ['en', 'unknown']:
+                    # Only translate if source and target languages are different
+                    if detected_lang != self.target_lang and detected_lang != 'unknown':
                         # Prepare translation prompt for comment
+                        target_lang_name = self._get_language_name(
+                            self.target_lang)
                         system_prompt = f"""You are a code comment translator.
-                        Translate only the comment text while preserving any comment markers and formatting.
+                        Translate only the comment text from {self._get_language_name(detected_lang)} to {target_lang_name} while preserving any comment markers and formatting.
                         If the comment contains code examples, variable names, or function names, keep those unchanged.
                         Preserve any special comment markers (e.g., @param, @return, TODO:, FIXME:, etc.)."""
 
-                        user_prompt = f"Translate this code comment to English:\n\n{comment_text}"
+                        user_prompt = f"Translate this code comment to {target_lang_name}:\n\n{comment_text}"
 
                         try:
                             response = self.client.chat.completions.create(
@@ -413,7 +435,8 @@ class MarkdownTranslator:
                                 translated_code[comment['end_pos']:]
                             )
                         except Exception as e:
-                            logger.error(f"Error translating comment: {str(e)}")
+                            logger.error(
+                                f"Error translating comment: {str(e)}")
 
                 # Reconstruct the code block with markers
                 return {
@@ -435,18 +458,22 @@ class MarkdownTranslator:
         logger.debug(
             f"Language: {detected_lang} ({'specified' if self.source_lang else 'detected'})")
 
-        # If it's already English or can't be detected, return original
-        if detected_lang == 'en' or (detected_lang == 'unknown' and not self.source_lang):
+        # If it's already in the target language or can't be detected, return original
+        if detected_lang == self.target_lang or (detected_lang == 'unknown' and not self.source_lang):
             logger.debug(
-                "Text is already in English or language cannot be detected. Skipping translation.")
+                f"Text is already in {self._get_language_name(self.target_lang)} or language cannot be detected. Skipping translation.")
             return block
 
-        # Update system prompt to include source language when specified
-        lang_info = f"from {detected_lang}" if detected_lang != 'unknown' else ""
+        # Get language names for clearer prompts
+        source_lang_name = self._get_language_name(
+            detected_lang) if detected_lang != 'unknown' else "the source language"
+        target_lang_name = self._get_language_name(self.target_lang)
+
+        # Update system prompt to include source and target languages
         system_prompt = f"""You are a markdown translator that only outputs the translated content.
 
     Rules:
-    1. Translate ONLY the text between <TRANSLATE> and </TRANSLATE> markers {lang_info} to English
+    1. Translate ONLY the text between <TRANSLATE> and </TRANSLATE> markers from {source_lang_name} to {target_lang_name}
     2. Keep all markdown formatting exactly as is
     3. Return ONLY the translated content, without any markers or explanations
     4. Keep line breaks exactly as they appear in the original
@@ -454,7 +481,7 @@ class MarkdownTranslator:
     For this {block["type"]}:
     {special_instructions.get(block["type"], "")}"""
 
-        user_prompt = f"""Translate this {block["type"]} to English, preserving all formatting:
+        user_prompt = f"""Translate this {block["type"]} from {source_lang_name} to {target_lang_name}, preserving all formatting:
 
     <TRANSLATE>
     {block['content']}
@@ -487,7 +514,8 @@ class MarkdownTranslator:
             # Log the response
             logger.debug("\n=== RESPONSE ===")
             logger.debug(f"Response content:")
-            logger.debug(json.dumps(translated_text, ensure_ascii=False, indent=2))
+            logger.debug(json.dumps(translated_text,
+                         ensure_ascii=False, indent=2))
 
             # Verify the translation preserves markdown structure
             if block["type"] == "header" and not translated_text.startswith('#'):
@@ -510,6 +538,7 @@ class MarkdownTranslator:
         input_file: str,
         output_file: Optional[str] = None,
         source_lang: Optional[str] = None,
+        target_lang: Optional[str] = None,
         verbose: bool = True,
         log_level: str = "INFO"
     ) -> str:
@@ -520,6 +549,7 @@ class MarkdownTranslator:
             input_file: Path to input markdown file
             output_file: Optional path to save translated file
             source_lang: Optional source language override
+            target_lang: Optional target language override
             verbose: Whether to print progress information
             log_level: Logging level to use
             
@@ -529,12 +559,20 @@ class MarkdownTranslator:
         # Set logging level for this translation
         logger.setLevel(getattr(logging, log_level.upper()))
 
-        # Allow overriding source language for this specific translation
+        # Save original language settings
         original_source_lang = self.source_lang
+        original_target_lang = self.target_lang
+
+        # Allow overriding source and target languages for this specific translation
         if source_lang:
             self.source_lang = self._normalize_language_code(source_lang)
             logger.info(
                 f"Source language temporarily set to: {self.source_lang}")
+
+        if target_lang:
+            self.target_lang = self._normalize_language_code(target_lang)
+            logger.info(
+                f"Target language temporarily set to: {self.target_lang}")
 
         try:
             content = self.read_markdown_file(input_file)
@@ -573,8 +611,10 @@ class MarkdownTranslator:
             return translated_content
 
         finally:
-            # Restore original source language setting
+            # Restore original language settings
             self.source_lang = original_source_lang
+            self.target_lang = original_target_lang
+
 
 def main():
     # Set up argument parser
@@ -600,6 +640,12 @@ def main():
         '--source-lang',
         type=str,
         help='Source language code or name (e.g., "es" or "spanish")'
+    )
+    parser.add_argument(
+        '--target-lang',
+        type=str,
+        default='en',
+        help='Target language code or name (e.g., "fr" or "french"), defaults to English'
     )
     parser.add_argument(
         '--api-key',
@@ -631,8 +677,20 @@ def main():
         action='store_true',
         help='Suppress progress information'
     )
+    parser.add_argument(
+        '--list-languages',
+        action='store_true',
+        help='List all supported languages and exit'
+    )
 
     args = parser.parse_args()
+
+    # If the user just wants to list supported languages
+    if args.list_languages:
+        print("Supported Languages:")
+        for name, code in sorted(SUPPORTED_LANGUAGES.items()):
+            print(f"  {name.capitalize()} ({code})")
+        return 0
 
     # Configure logging
     logging.basicConfig(
@@ -653,15 +711,21 @@ def main():
     # Set default output file if not provided
     if not args.output:
         input_path = Path(args.input_file)
-        args.output = str(input_path.parent /
-                          f"{input_path.stem}_translated{input_path.suffix}")
+        target_lang_code = args.target_lang.lower()
+        target_lang_code = next((code for name, code in SUPPORTED_LANGUAGES.items()
+                                 if name.lower() == target_lang_code.lower()
+                                 or code.lower() == target_lang_code.lower()),
+                                target_lang_code)
+        args.output = str(
+            input_path.parent / f"{input_path.stem}_{target_lang_code}{input_path.suffix}")
 
     # Create translator instance
     translator = MarkdownTranslator(
         api_key=args.api_key,
         base_url=args.base_url,
         model=args.model,
-        source_lang=args.source_lang
+        source_lang=args.source_lang,
+        target_lang=args.target_lang
     )
 
     try:
@@ -669,6 +733,7 @@ def main():
             args.input_file,
             args.output,
             source_lang=args.source_lang,
+            target_lang=args.target_lang,
             verbose=not args.quiet,
             log_level=args.log_level
         )
